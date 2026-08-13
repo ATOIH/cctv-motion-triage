@@ -1,5 +1,5 @@
 # gullak
-
+*"Why this exists, and every number in it, is written up here: https://medium.com/@ca.aayushgupta/triage-not-surveillance-warehouse-video-analytics-without-a-model-b37ae4ee7342."*
 **Turn an unwatchable pile of CCTV clips into the few minutes that actually matter.**
 
 My son's piggy bank went missing on a Sunday morning. Finding it meant going through 16,294 one-minute clips from a six-year-old Xiaomi camera. 277 hours of footage.
