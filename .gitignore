@@ -1,0 +1,7 @@
+config.env
+fixture/
+out/
+*.mp4
+*.jpg
+*.png
+.DS_Store

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# gullak — turn an unwatchable pile of CCTV clips into the few minutes that matter.
+#
+#   gullak merge   [DATE...]   thousands of per-minute clips -> one file per date
+#   gullak digest  [DATE...]   one file per date -> only the moments something moved
+#   gullak run     [DATE...]   both, in order
+#   gullak doctor              check the environment and the config
+#
+# With no DATE arguments every date found is processed.
+# Configuration lives in config.env. See config.example.env.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LIB="$ROOT/lib"
+
+. "$LIB/common.sh"
+. "$LIB/merge.sh"
+. "$LIB/digest.sh"
+load_config "$ROOT"
+
+usage() {
+  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  cat <<'EOF'
+
+Environment / config.env keys:
+
+  SRC                archive root containing YYYYMMDDHH folders
+  OUT                output root (daily/, digest/, collage/ are created under it)
+  JOBS               parallel ffprobe workers                      default 8
+
+  SCENE_HI           score that OPENS a motion event               default 0.015
+  SCENE_LO           score that SUSTAINS an open event             default 0.008
+  DETECT_WIDTH       analysis width in px                          default 480
+  BLUR               gaussian sigma before differencing            default 1.2
+  ROI                crop as w:h:x:y, empty means whole frame      default (none)
+  MIN_HITS           keyframes an event must span to count         default 1
+  YAVG_MAX_DELTA     mean-luma jump treated as a lighting change   default 12
+  EVENT_GAP          seconds of quiet that closes an event         default 30
+
+  DIGEST_WIDTH       output width of the reel                      default 960
+  DIGEST_FPS         playback rate of the reel                     default 6
+  KEEP_AUDIO         1 to carry audio through the merge            default 0
+
+Read docs/TUNING.md before changing anything under "detection".
+EOF
+}
+
+cmd_doctor() {
+  local ok=0
+  step "environment"
+  if command -v ffmpeg >/dev/null; then
+    info "  ffmpeg    $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)"
+  else warn "  ffmpeg    MISSING   brew install ffmpeg"; ok=1; fi
+  if command -v ffprobe >/dev/null; then info "  ffprobe   present"
+  else warn "  ffprobe   MISSING"; ok=1; fi
+  info "  frame-rate flag for this build: $(fps_passthrough_flag)"
+  info "  awk       $(awk --version 2>/dev/null | head -1 || echo 'BSD awk')"
+
+  step "config"
+  if [ -z "$SRC" ]; then warn "  SRC is unset"; ok=1
+  elif [ ! -d "$SRC" ]; then warn "  SRC does not exist: $SRC"; ok=1
+  else
+    local nh; nh=$(find "$SRC" -maxdepth 1 -type d \
+      -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' | wc -l | tr -d ' ')
+    info "  SRC       $SRC  ($nh hour-folders)"
+  fi
+  if [ -z "$OUT" ]; then warn "  OUT is unset"; ok=1; else info "  OUT       $OUT"; fi
+  info "  detection SCENE_HI=$SCENE_HI SCENE_LO=$SCENE_LO MIN_HITS=$MIN_HITS ROI=${ROI:-none}"
+
+  step "keyframe interval of the first daily file, if one exists"
+  local f; f=$(find "$OUT/daily" -maxdepth 1 -name '*.mp4' 2>/dev/null | head -1)
+  if [ -n "$f" ]; then
+    ffprobe -v error -select_streams v:0 -show_entries packet=flags -of csv=p=0 "$f" \
+      | awk -F, '{n++; if($1 ~ /^K/) k++}
+                 END{ if(k) printf "  1 keyframe per %.1f frames. That interval is the\n  finest motion resolution this archive can give you.\n", n/k }'
+  else info "  (none yet)"; fi
+
+  [ "$ok" -eq 0 ] && step "ready" || die "fix the items above first"
+}
+
+cmd_run() { cmd_merge "$@"; cmd_digest "$@"; }
+
+case "${1:-}" in
+  merge)  shift; cmd_merge  "$@" ;;
+  digest) shift; cmd_digest "$@" ;;
+  run)    shift; cmd_run    "$@" ;;
+  doctor) shift; cmd_doctor      ;;
+  ""|-h|--help|help) usage ;;
+  *) die "unknown command: $1  (try: gullak help)" ;;
+esac
